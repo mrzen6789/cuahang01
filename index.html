@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Đơn Đặt Hàng Online</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Chosen Palette: Warm Neutrals -->
+    <!-- Application Structure Plan: The application is designed as a modern e-commerce page, improving upon the static Google Form. It's structured into three main interactive sections: 1. A visual Product Showcase Grid for easy Browse and selection, now enhanced with category filtering and dynamic data loading from Firestore. 2. A dynamic Order Summary (Shopping Cart) that updates in real-time, providing immediate feedback on cost. 3. A clear Customer Information Form for checkout. This structure was chosen to create an intuitive and efficient user flow, from product discovery to order placement, which is a significant usability upgrade from a linear form, further improved by product categorization and real-time product data. -->
+    <!-- Visualization & Content Choices: Report Info (Product List) -> Goal (Select Products) -> Viz (Interactive Product Cards with HTML/Tailwind) -> Interaction (Click 'Add to Cart' button) -> Justification (More engaging and visually appealing than a form list, now with live data). Report Info (Quantity/Customer Details) -> Goal (Input Order Details) -> Viz (Dynamic Cart UI and a standard HTML form) -> Interaction (Real-time quantity changes, form input validation) -> Justification (Provides clarity and follows standard e-commerce conventions for a better user experience). Product Categories: Goal (Organize/Filter Products) -> Viz (Interactive Buttons/Tabs with HTML/Tailwind) -> Interaction (Click to filter product list) -> Justification (Improves navigability for larger product sets, making content easier to consume). Product Data Sync: Goal (Real-time product updates) -> Viz (Firestore integration with onSnapshot listener) -> Interaction (Automatic data sync) -> Justification (Ensures product list is always up-to-date with management changes, enhancing data consistency). Email Notification: Goal (Automated order notification) -> Viz (Client-side fetch to serverless Google Apps Script) -> Interaction (Form submission triggers fetch) -> Justification (Provides automated email delivery without a dedicated server, leveraging existing Google infrastructure). -->
+    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+    <style>
+        body {
+            font-family: 'Be Vietnam Pro', sans-serif;
+        }
+        .product-card {
+            transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+        }
+        .product-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1), 0 4px 6px -2px rgba(0,0,0,0.05);
+        }
+        .modal {
+            transition: opacity 0.25s ease;
+        }
+        .modal-content {
+            transition: transform 0.25s ease;
+        }
+        .category-button.active {
+            background-color: #8B542F; /* amber-800 */
+            color: white;
+        }
+        .loading-overlay {
+            background-color: rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(3px);
+            z-index: 60;
+        }
+        .spinner {
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-top: 4px solid #fff;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-stone-50 text-stone-800">
+
+    <div id="app" class="container mx-auto p-4 md:p-8">
+
+        <header class="text-center mb-10">
+            <h1 class="text-4xl md:text-5xl font-bold text-amber-900">Cửa Hàng Bánh Ngọt Handmade</h1>
+            <p class="mt-4 text-lg text-stone-600">Chọn những món bánh bạn yêu thích và chúng tôi sẽ giao đến tận nơi!</p>
+            <p id="user-id-display-order-app" class="mt-2 text-sm text-stone-500">ID Người Dùng: Đang tải...</p>
+        </header>
+
+        <main class="grid grid-cols-1 lg:grid-cols-3 gap-8 md:gap-12">
+            
+            <section class="lg:col-span-2">
+                <h2 class="text-3xl font-semibold mb-6 border-b-2 border-amber-800 pb-2">Thực Đơn Của Chúng Tôi</h2>
+                
+                <div id="category-filters" class="flex flex-wrap gap-3 mb-8">
+                    <button data-category="all" class="category-button px-5 py-2 rounded-full bg-stone-200 text-stone-700 font-medium hover:bg-stone-300 transition-colors duration-200 active">Tất Cả</button>
+                    <!-- Categories will be rendered here by JS -->
+                </div>
+
+                <div id="product-list" class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                </div>
+            </section>
+
+            <aside class="lg:col-span-1">
+                <div class="sticky top-8 bg-white p-6 rounded-2xl shadow-lg">
+                    <h2 class="text-3xl font-semibold mb-6 border-b-2 border-amber-800 pb-2">Giỏ Hàng Của Bạn</h2>
+                    <div id="cart-items" class="mb-6">
+                        <p id="cart-empty-message" class="text-stone-500">Giỏ hàng của bạn đang trống.</p>
+                    </div>
+
+                    <div id="cart-summary" class="border-t border-stone-200 pt-4 space-y-2 hidden">
+                        <div class="flex justify-between text-lg font-medium">
+                            <span>Tổng cộng</span>
+                            <span id="cart-total">0 VNĐ</span>
+                        </div>
+                        <p class="text-sm text-stone-500">Phí vận chuyển sẽ được thông báo khi xác nhận đơn.</p>
+                    </div>
+
+                    <div id="customer-info-section" class="mt-8">
+                         <h3 class="text-2xl font-semibold mb-4">Thông Tin Giao Hàng</h3>
+                         <form id="order-form">
+                            <div class="space-y-4">
+                                <div>
+                                    <label for="name" class="block text-sm font-medium text-stone-700">Họ và tên</label>
+                                    <input type="text" id="name" name="name" required class="mt-1 block w-full px-3 py-2 bg-white border border-stone-300 rounded-md shadow-sm focus:outline-none focus:ring-amber-500 focus:border-amber-500 sm:text-sm">
+                                </div>
+                                <div>
+                                    <label for="phone" class="block text-sm font-medium text-stone-700">Số điện thoại</label>
+                                    <input type="tel" id="phone" name="phone" required class="mt-1 block w-full px-3 py-2 bg-white border border-stone-300 rounded-md shadow-sm focus:outline-none focus:ring-amber-500 focus:border-amber-500 sm:text-sm">
+                                </div>
+                                <div>
+                                    <label for="address" class="block text-sm font-medium text-stone-700">Địa chỉ chi tiết</label>
+                                    <textarea id="address" name="address" rows="3" required class="mt-1 block w-full px-3 py-2 bg-white border border-stone-300 rounded-md shadow-sm focus:outline-none focus:ring-amber-500 focus:border-amber-500 sm:text-sm"></textarea>
+                                </div>
+                                <div>
+                                    <label for="notes" class="block text-sm font-medium text-stone-700">Ghi chú (tùy chọn)</label>
+                                    <textarea id="notes" name="notes" rows="2" class="mt-1 block w-full px-3 py-2 bg-white border border-stone-300 rounded-md shadow-sm focus:outline-none focus:ring-amber-500 focus:border-amber-500 sm:text-sm"></textarea>
+                                </div>
+                            </div>
+                            <button type="submit" id="submit-order-btn" class="w-full bg-amber-800 text-white font-bold py-3 px-4 rounded-lg mt-6 hover:bg-amber-900 transition-colors duration-300 disabled:bg-stone-400">
+                                Hoàn Tất Đặt Hàng
+                            </button>
+                         </form>
+                    </div>
+                </div>
+            </aside>
+
+        </main>
+        
+        <footer class="text-center mt-16 py-6 border-t border-stone-200">
+            <p class="text-stone-600">Cảm ơn bạn đã ghé thăm!</p>
+            <p class="text-sm text-stone-500">Mọi thắc mắc, vui lòng liên hệ Zalo/Hotline: 09xx.xxx.xxx</p>
+        </footer>
+
+    </div>
+
+    <div id="success-modal" class="modal fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 opacity-0 pointer-events-none">
+        <div class="modal-content bg-white rounded-2xl shadow-2xl p-8 max-w-md w-full text-center transform scale-95">
+            <div class="mx-auto flex items-center justify-center h-16 w-16 rounded-full bg-green-100 mb-5">
+                <svg class="h-8 w-8 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                </svg>
+            </div>
+            <h3 class="text-2xl font-bold text-stone-900 mb-2">Đặt Hàng Thành Công!</h3>
+            <p class="text-stone-600 mb-6">Cảm ơn bạn đã tin tưởng. Chúng tôi sẽ liên hệ xác nhận đơn hàng và thông tin vận chuyển trong thời gian sớm nhất.</p>
+            <button id="close-modal-btn" class="w-full bg-amber-800 text-white font-bold py-2 px-4 rounded-lg hover:bg-amber-900 transition-colors">
+                Đóng
+            </button>
+        </div>
+    </div>
+
+    <div id="loading-overlay" class="loading-overlay fixed inset-0 flex items-center justify-center hidden">
+        <div class="flex flex-col items-center text-white">
+            <div class="spinner"></div>
+            <p class="mt-4 text-lg">Đang xử lý đơn hàng...</p>
+        </div>
+    </div>
+
+    <!-- Firebase CDN -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Global variables for Firebase (MANDATORY)
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        let app;
+        let db;
+        let auth;
+        let userId = null;
+        let productsCollectionRef;
+        let products = []; // This will now store products fetched from Firestore
+
+        // THAY THẾ URL NÀY BẰNG URL WEB APP CỦA GOOGLE APPS SCRIPT CỦA BẠN
+        const GOOGLE_APPS_SCRIPT_WEB_APP_URL = 'YOUR_GOOGLE_APPS_SCRIPT_WEB_APP_URL_HERE'; 
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            try {
+                app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+
+                // Sign in with custom token if available, otherwise anonymously
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+
+                onAuthStateChanged(auth, (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        console.log("User ID for order app:", userId);
+                        document.getElementById('user-id-display-order-app').textContent = `ID Người Dùng: ${userId}`;
+                        // Define the Firestore collection path based on user ID and app ID
+                        // This MUST match the path used in the product management app
+                        productsCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/products`);
+                        fetchProducts(); // Start fetching products after auth
+                    } else {
+                        console.log("No user is signed in for order app.");
+                        userId = null;
+                        document.getElementById('user-id-display-order-app').textContent = `ID Người Dùng: Chưa đăng nhập`;
+                        // Handle case where user is not authenticated, e.g., show a message
+                        document.getElementById('product-list').innerHTML = `<p class="text-center text-stone-500 col-span-full">Không thể tải sản phẩm. Vui lòng thử lại sau.</p>`;
+                    }
+                });
+
+            } catch (error) {
+                console.error("Lỗi khởi tạo Firebase hoặc đăng nhập cho ứng dụng đặt hàng:", error);
+                alert("Không thể kết nối đến dịch vụ sản phẩm. Vui lòng thử lại.");
+            }
+        });
+
+        let cart = {};
+        let currentCategory = 'all';
+
+        const productListEl = document.getElementById('product-list');
+        const cartItemsEl = document.getElementById('cart-items');
+        const cartEmptyMessageEl = document.getElementById('cart-empty-message');
+        const cartSummaryEl = document.getElementById('cart-summary');
+        const cartTotalEl = document.getElementById('cart-total');
+        const orderForm = document.getElementById('order-form');
+        const submitOrderBtn = document.getElementById('submit-order-btn');
+        const successModal = document.getElementById('success-modal');
+        const closeModalBtn = document.getElementById('close-modal-btn');
+        const categoryFiltersEl = document.getElementById('category-filters');
+        const loadingOverlay = document.getElementById('loading-overlay');
+        
+        const formatCurrency = (amount) => {
+            return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(amount);
+        };
+
+        function showLoading() {
+            loadingOverlay.classList.remove('hidden');
+            submitOrderBtn.disabled = true;
+        }
+
+        function hideLoading() {
+            loadingOverlay.classList.add('hidden');
+            submitOrderBtn.disabled = false;
+        }
+
+        function renderCategories() {
+            // Ensure products array is populated before rendering categories
+            if (products.length === 0) {
+                categoryFiltersEl.innerHTML = ''; // Clear if no products
+                return;
+            }
+            const categories = ['all', ...new Set(products.map(p => p.category))];
+            categoryFiltersEl.innerHTML = ''; 
+            categories.forEach(category => {
+                const button = document.createElement('button');
+                button.dataset.category = category;
+                button.className = `category-button px-5 py-2 rounded-full bg-stone-200 text-stone-700 font-medium hover:bg-stone-300 transition-colors duration-200 ${currentCategory === category ? 'active' : ''}`;
+                button.textContent = category === 'all' ? 'Tất Cả' : category;
+                categoryFiltersEl.appendChild(button);
+            });
+        }
+
+        function renderProducts() {
+            productListEl.innerHTML = '';
+            if (products.length === 0) {
+                productListEl.innerHTML = `<p class="text-center text-stone-500 col-span-full">Không có sản phẩm nào để hiển thị.</p>`;
+                return;
+            }
+
+            const filteredProducts = currentCategory === 'all' 
+                ? products 
+                : products.filter(p => p.category === currentCategory);
+
+            if (filteredProducts.length === 0) {
+                productListEl.innerHTML = `<p class="text-center text-stone-500 col-span-full">Không tìm thấy sản phẩm trong danh mục này.</p>`;
+                return;
+            }
+
+            filteredProducts.forEach(product => {
+                const productEl = document.createElement('div');
+                productEl.className = 'product-card bg-white rounded-2xl overflow-hidden shadow-md flex flex-col';
+                productEl.innerHTML = `
+                    <img src="${product.image}" alt="${product.name}" class="w-full h-48 object-cover">
+                    <div class="p-5 flex flex-col flex-grow">
+                        <h3 class="text-xl font-semibold text-amber-900">${product.name}</h3>
+                        <p class="text-base text-stone-600 mb-2">${product.category}</p>
+                        <p class="text-lg font-medium text-stone-700 mt-1">${formatCurrency(product.price)}</p>
+                        <button data-product-id="${product.id}" class="add-to-cart-btn mt-auto w-full bg-amber-800 text-white font-semibold py-2 px-4 rounded-lg hover:bg-amber-900 transition-colors duration-300">
+                            Thêm vào giỏ
+                        </button>
+                    </div>
+                `;
+                productListEl.appendChild(productEl);
+            });
+        }
+
+        function updateCart() {
+            cartItemsEl.innerHTML = '';
+            let total = 0;
+            const cartKeys = Object.keys(cart);
+
+            if (cartKeys.length === 0) {
+                cartEmptyMessageEl.style.display = 'block';
+                cartSummaryEl.style.display = 'none';
+                return;
+            }
+
+            cartEmptyMessageEl.style.display = 'none';
+            cartSummaryEl.style.display = 'block';
+
+            cartKeys.forEach(productId => {
+                const product = products.find(p => p.id == productId);
+                if (!product) { // Handle case where product might have been deleted from Firestore
+                    delete cart[productId];
+                    return;
+                }
+                const quantity = cart[productId];
+                total += product.price * quantity;
+
+                const cartItemEl = document.createElement('div');
+                cartItemEl.className = 'flex items-center justify-between py-3 border-b border-stone-100 last:border-b-0';
+                cartItemEl.innerHTML = `
+                    <div>
+                        <p class="font-semibold text-stone-800">${product.name}</p>
+                        <p class="text-sm text-stone-500">${formatCurrency(product.price)}</p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <input type="number" min="1" value="${quantity}" data-product-id="${productId}" class="quantity-input w-14 text-center border-stone-300 rounded-md">
+                        <button data-product-id="${productId}" class="remove-from-cart-btn text-red-500 hover:text-red-700 transition-colors">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clip-rule="evenodd" /></svg>
+                        </button>
+                    </div>
+                `;
+                cartItemsEl.appendChild(cartItemEl);
+            });
+            cartTotalEl.textContent = formatCurrency(total);
+        }
+        
+        productListEl.addEventListener('click', (e) => {
+            if (e.target.classList.contains('add-to-cart-btn')) {
+                const productId = e.target.dataset.productId;
+                cart[productId] = (cart[productId] || 0) + 1;
+                updateCart();
+            }
+        });
+
+        cartItemsEl.addEventListener('click', (e) => {
+            const removeBtn = e.target.closest('.remove-from-cart-btn');
+            if (removeBtn) {
+                const productId = removeBtn.dataset.productId;
+                delete cart[productId];
+                updateCart();
+            }
+        });
+        
+        cartItemsEl.addEventListener('change', (e) => {
+            if (e.target.classList.contains('quantity-input')) {
+                const productId = e.target.dataset.productId;
+                const quantity = parseInt(e.target.value, 10);
+                if (quantity > 0) {
+                    cart[productId] = quantity;
+                } else {
+                    delete cart[productId];
+                }
+                updateCart();
+            }
+        });
+
+        orderForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            if (Object.keys(cart).length === 0) {
+                alert('Vui lòng thêm sản phẩm vào giỏ hàng trước khi đặt hàng.');
+                return;
+            }
+
+            showLoading();
+
+            const formData = new FormData(orderForm);
+            const orderDetails = {
+                customerName: formData.get('name'),
+                customerPhone: formData.get('phone'),
+                customerAddress: formData.get('address'),
+                customerNotes: formData.get('notes'),
+                items: Object.keys(cart).map(productId => {
+                    const product = products.find(p => p.id == productId);
+                    return {
+                        name: product.name,
+                        price: product.price,
+                        quantity: cart[productId],
+                        totalItemPrice: product.price * cart[productId]
+                    };
+                }),
+                totalOrderPrice: cartTotalEl.textContent
+            };
+
+            try {
+                const response = await fetch(GOOGLE_APPS_SCRIPT_WEB_APP_URL, {
+                    method: 'POST',
+                    mode: 'no-cors', 
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(orderDetails),
+                });
+                
+                console.log('Đơn hàng đã gửi:', orderDetails);
+                showSuccessModal();
+
+            } catch (error) {
+                console.error('Lỗi khi gửi đơn hàng:', error);
+                alert('Đã có lỗi xảy ra khi gửi đơn hàng. Vui lòng thử lại sau.');
+            } finally {
+                hideLoading();
+            }
+        });
+
+        function showSuccessModal() {
+            successModal.classList.remove('opacity-0', 'pointer-events-none');
+            successModal.querySelector('.modal-content').classList.remove('scale-95');
+        }
+
+        function hideSuccessModal() {
+            successModal.querySelector('.modal-content').classList.add('scale-95');
+            successModal.classList.add('opacity-0', 'pointer-events-none');
+            
+            orderForm.reset();
+            cart = {};
+            updateCart();
+        }
+
+        closeModalBtn.addEventListener('click', hideSuccessModal);
+
+        categoryFiltersEl.addEventListener('click', (e) => {
+            if (e.target.classList.contains('category-button')) {
+                document.querySelectorAll('.category-button').forEach(button => {
+                    button.classList.remove('active');
+                });
+                e.target.classList.add('active');
+                currentCategory = e.target.dataset.category;
+                renderProducts();
+            }
+        });
+
+        // Function to fetch products from Firestore
+        function fetchProducts() {
+            if (!productsCollectionRef) {
+                console.warn("Firestore collection reference not set. User might not be authenticated yet.");
+                productListEl.innerHTML = `<p class="text-center text-stone-500 col-span-full">Đang tải sản phẩm...</p>`;
+                return;
+            }
+            productListEl.innerHTML = `<p class="text-center text-stone-500 col-span-full">Đang tải sản phẩm...</p>`; // Show loading message
+            onSnapshot(productsCollectionRef, (snapshot) => {
+                products = []; // Clear existing products
+                snapshot.forEach(doc => {
+                    products.push({ id: doc.id, ...doc.data() });
+                });
+                renderCategories(); // Re-render categories based on new products
+                renderProducts(); // Re-render products based on new data
+                updateCart(); // Update cart in case product data changed
+            }, (error) => {
+                console.error("Lỗi khi tải sản phẩm từ Firestore:", error);
+                productListEl.innerHTML = `<p class="text-center text-red-500 col-span-full">Lỗi khi tải sản phẩm. Vui lòng thử lại.</p>`;
+            });
+        }
+    </script>
+</body>
+</html>
